@@ -1,0 +1,36 @@
+data:
+  base_dir: Pop1K7/midi_analyzed
+  pkl_dir: Pop1K7/midi_analyzed/cp_pkl
+  midi_rep: CPWord
+  tokenizer:
+    "pitch_range": [21, 109]
+    "beat_res": 
+      "(0, 4)": 8
+      "(4, 12)": 4
+    "num_velocities": 32
+    "special_tokens": ["PAD", "BOS", "EOS", "MASK"]
+    "use_chords": True
+    "use_rests": True
+    "use_tempo": True
+    "use_time_signatures": False
+    "use_programs": False
+    "tempo_range": [40, 250]
+model:
+  type: gpt2
+env:
+  device: cuda:1
+  seed: 42
+  num_workers: 4
+  prefetch_factor: 2
+train:
+  batch_size: 64
+  epochs: 200
+  warmup_epochs: 0
+  lr: 0.0002
+  min_lr: 0.000001
+  lr_scheduler: none
+  weight_decay: 0.0001
+  gradient_accumulation_steps: 1    # not used for now, reserved for future use
+  save_interval: 1
+  log_interval: 100
+save_dir: results/p1/exp_cpword

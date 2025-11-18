@@ -1,0 +1,14 @@
+soundfonts/
+Pop1K7/
+*.bin
+*.ckpt
+*.pt
+*.pkl
+*.npy
+*.npz
+*.mid
+*.midi
+*.wav
+*.mp3
+__pycache__/
+.vscode/
