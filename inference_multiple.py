@@ -1,11 +1,13 @@
 import subprocess
 import os
+import time
 
 model_to_inference = ['gpt2', 'transformer_xl']
 epoch = [100, 150, 200]
 
 for model in model_to_inference:
     for ep in epoch:
+        start_time = time.time()
         print(f"Running inference for model: {model} at epoch: {ep}")
         cmd = [
             'python', 'main.py',
@@ -18,3 +20,5 @@ for model in model_to_inference:
             '--num_inference_files', '20',
         ]
         subprocess.run(cmd)
+        end_time = time.time()
+        print(f"Inference for model: {model} at epoch: {ep} completed in {end_time - start_time:.2f} seconds.\n")

@@ -13,20 +13,20 @@ micromamba run -n cp_transformers bash -c "\
         --output_dir ../results/cpword_${loss} \
         --num_bars 32 \
         --num_samples 20 \
-        --temperature 1.0 \
+        --temperature 1.2 \
         --top_p 0.9 \
-        --gid 3; \
+        --gid 2; \
     python3 workspace/uncond/cp-linear/inference_controlled.py \
         --model_path $model_path \
         --loss $loss \
         --dict_path ../Pop1K7/representations/uncond/cp/ailab17k_from-scratch_cp/dictionary.pkl \
         --output_dir ../results/cpword_${loss}/continuation \
         --prompt_midi_dir ../prompt_song \
-        --num_bars 24 \
+        --num_bars 32 \
         --num_samples 20 \
-        --temperature 1.0 \
+        --temperature 1.2 \
         --top_p 0.9 \
-        --gid 3; \
+        --gid 2; \
     cd ..; \
     python3 render.py --midi_dir ./results/cpword_${loss}/\
         --store_dir ./results/cpword_${loss}/; \

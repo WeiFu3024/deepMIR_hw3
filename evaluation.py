@@ -9,21 +9,21 @@ env = os.environ.copy()
 cwd = 'MusDr'
 dictinary_path = 'basic_event_dictionary.pkl'
 
-folder_to_evaluate = [
-    'results/gpt2_epoch_100',
-    'results/gpt2_epoch_150',
-    'results/gpt2_epoch_200',
-    'results/transformer_xl_epoch_100',
-    'results/transformer_xl_epoch_150',
-    'results/transformer_xl_epoch_200',
-    'results/cpword_50',
-    'results/cpword_36',
-    'results/cpword_30',
-    'results/compose_embellish/stage2'
-]
+folder_to_evaluate = {
+    'Real Data': 'Pop1K7/continuous_src',
+    'gpt2_epoch_100': 'results/gpt2_epoch_100',
+    'gpt2_epoch_150': 'results/gpt2_epoch_150',
+    'gpt2_epoch_200': 'results/gpt2_epoch_200',
+    'transformer_xl_epoch_100': 'results/transformer_xl_epoch_100',
+    'transformer_xl_epoch_150': 'results/transformer_xl_epoch_150',
+    'transformer_xl_epoch_200': 'results/transformer_xl_epoch_200',
+    'cpword_loss050': 'results/cpword_50',
+    'cpword_loss036': 'results/cpword_36',
+    'cpword_loss030': 'results/cpword_30',
+}
 
 dictinary_path = os.path.abspath(dictinary_path)
-for folder in folder_to_evaluate:
+for _, folder in folder_to_evaluate.items():
     folder = os.path.abspath(folder)
     print(f"Evaluating results in folder: {folder}")
     cmd = [
@@ -43,7 +43,7 @@ for folder in folder_to_evaluate:
 print("Calculating average metrics across all experiments...")
 average_metrics = {}
 std_metrics = {}
-for folder in folder_to_evaluate:
+for name, folder in folder_to_evaluate.items():
     csv_path = os.path.join(folder, 'evaluation_results.csv')
     df = pd.read_csv(csv_path)
     # filter out file contain 'skyline' (for compose and embellish results)
@@ -52,9 +52,9 @@ for folder in folder_to_evaluate:
 
     avg_metrics = df.iloc[:, 1:].mean()
     std_metrics_values = df.iloc[:, 1:].std()
-    average_metrics[folder] = avg_metrics
-    std_metrics[folder] = std_metrics_values
-    print(f"Average metrics for {folder}:")
+    average_metrics[name] = avg_metrics
+    std_metrics[name] = std_metrics_values
+    print(f"Average metrics for {name}:")
     for (metric_avg, value_avg), (metric_std, value_std) in zip(avg_metrics.items(), std_metrics_values.items()):
         assert metric_avg == metric_std, "Metric names do not match!"
         print(f"  {metric_avg}: {value_avg:.4f} ± {value_std:.4f}")

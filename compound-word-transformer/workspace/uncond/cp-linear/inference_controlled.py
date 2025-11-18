@@ -15,6 +15,7 @@ from miditoolkit.midi.containers import Marker, Instrument, TempoChange, Note
 
 # Import from main-cp.py
 from main_cp import TransformerModel, sampling, write_midi
+import time
 
 ################################################################################
 # Constants
@@ -24,126 +25,230 @@ BAR_RESOL = BEAT_RESOL * 4
 TICK_RESOL = BEAT_RESOL // 4
 
 ################################################################################
-# MIDI to Representation Conversion
+# MIDI to Words Conversion
 ################################################################################
 
-def read_midi_to_events(path_midi, word2event, event2word):
+def read_midi_to_words(midi_path, event2word, word2event):
     """
-    Read a MIDI file and convert it to the compound word representation
-    Returns: numpy array of shape (seq_len, 7)
+    Read MIDI file and convert to compound word representation 
+    Following the exact preprocessing pipeline: midi2corpus → corpus2events → events2words
+    
+    Args:
+        midi_path: path to MIDI file
+        event2word: mapping from event type -> event string -> integer
+        word2event: mapping from event type -> integer -> event string
+    
+    Returns:
+        numpy array of compound words (shape: [seq_len, 7])
+        Each row: [tempo, chord, bar-beat, type, pitch, duration, velocity]
     """
-    midi_obj = miditoolkit.midi.parser.MidiFile(path_midi)
+    DEFAULT_VELOCITY_BINS = np.linspace(0, 128, 64+1, dtype=np.int32)
+    DEFAULT_BPM_BINS = np.linspace(32, 224, 64+1, dtype=np.int32)
+    DEFAULT_SHIFT_BINS = np.linspace(-60, 60, 60+1, dtype=np.int32)
+    MIN_VELOCITY = 40
+    NOTE_SORTING = 1  # descending by pitch
     
-    # Extract tempo changes
-    tempo_items = []
-    for tempo in midi_obj.tempo_changes:
-        tempo_items.append({
-            'time': tempo.time,
-            'tempo': tempo.tempo
-        })
+    midi_obj = miditoolkit.MidiFile(midi_path)
     
-    # Extract chord markers
-    chord_items = []
-    for marker in midi_obj.markers:
-        chord_items.append({
-            'time': marker.time,
-            'chord': marker.text
-        })
+    # === Step 1: Extract and quantize notes (matching midi2corpus.py) ===
+    notes = []
+    for instr in midi_obj.instruments:
+        if not instr.is_drum:
+            for note in instr.notes:
+                notes.append(note)
     
-    # Extract notes
-    note_items = []
-    for instrument in midi_obj.instruments:
-        if not instrument.is_drum:
-            for note in instrument.notes:
-                note_items.append({
-                    'start': note.start,
-                    'end': note.end,
-                    'pitch': note.pitch,
-                    'velocity': note.velocity
-                })
+    if not notes:
+        print('[Warning] No notes found')
+        return np.array([[0, 0, 1, 1, 0, 0, 0]])
     
-    # Sort notes by start time
-    note_items.sort(key=lambda x: x['start'])
+    # Sort notes: by start, then by pitch (descending)
+    if NOTE_SORTING == 1:
+        notes.sort(key=lambda x: (x.start, -x.pitch))
+    else:
+        notes.sort(key=lambda x: (x.start, x.pitch))
     
-    # Convert to compound words
+    # Compute offset (remove empty bars at beginning)
+    first_note_time = notes[0].start
+    last_note_time = notes[-1].start
+    quant_time_first = int(np.round(first_note_time / TICK_RESOL) * TICK_RESOL)
+    offset = quant_time_first // BAR_RESOL
+    last_bar = int(np.ceil(last_note_time / BAR_RESOL)) - offset
+    
+    # Determine actual bar range (from first bar with content to last)
+    first_content_bar = quant_time_first // BAR_RESOL - offset
+    last_content_bar = last_bar
+    
+    # Extract tempo/chord info
+    tempos = [(t.time, int(t.tempo)) for t in midi_obj.tempo_changes]
+    chords = [(m.time, m.text) for m in midi_obj.markers]
+    if not tempos:
+        tempos = [(0, 120)]
+    
+    # Quantize tempos
+    tempos = [(t, DEFAULT_BPM_BINS[np.argmin(abs(DEFAULT_BPM_BINS - bpm))]) for t, bpm in tempos]
+    
+    # Process notes with quantization
+    note_grid = {}
+    for note in notes:
+        # Adjust for offset
+        start_adjusted = note.start - offset * BAR_RESOL
+        end_adjusted = note.end - offset * BAR_RESOL
+        
+        if start_adjusted < 0:
+            continue
+        
+        # Quantize start time
+        quant_time = int(np.round(start_adjusted / TICK_RESOL) * TICK_RESOL)
+        
+        # Quantize velocity
+        velocity_quant = DEFAULT_VELOCITY_BINS[np.argmin(abs(DEFAULT_VELOCITY_BINS - note.velocity))]
+        velocity_quant = max(MIN_VELOCITY, velocity_quant)
+        
+        # Compute duration
+        note_duration = end_adjusted - start_adjusted
+        if note_duration > BAR_RESOL:
+            note_duration = BAR_RESOL
+        ntick_duration = int(np.round(note_duration / TICK_RESOL) * TICK_RESOL)
+        duration_quant = max(TICK_RESOL, ntick_duration)  # At least one tick
+        
+        # Store note info (don't modify original note object)
+        note_info = {
+            'pitch': note.pitch,
+            'duration': duration_quant,
+            'velocity': velocity_quant
+        }
+        
+        # Group by quantized time
+        if quant_time not in note_grid:
+            note_grid[quant_time] = []
+        note_grid[quant_time].append(note_info)
+    
+    # Process tempo grid
+    tempo_grid = {}
+    for t, tempo in tempos:
+        t = t - offset * BAR_RESOL
+        if t < 0:
+            t = 0
+        quant_time = int(np.round(t / TICK_RESOL) * TICK_RESOL)
+        tempo_grid[quant_time] = tempo
+    
+    # Process chord grid  
+    chord_grid = {}
+    for t, chord in chords:
+        t = t - offset * BAR_RESOL
+        if t < 0:
+            t = 0
+        quant_time = int(np.round(t / TICK_RESOL) * TICK_RESOL)
+        chord_grid[quant_time] = chord
+    
+    # === Step 2: Build events (matching corpus2events.py) ===
     events = []
-    current_bar = 0
-    current_tempo = None
-    current_chord = None
     
-    # Group notes by position
-    positions = {}
-    for note in note_items:
-        start_pos = note['start']
-        if start_pos not in positions:
-            positions[start_pos] = []
-        positions[start_pos].append(note)
-    
-    sorted_positions = sorted(positions.keys())
-    
-    for pos in sorted_positions:
-        # Calculate bar and beat
-        bar = pos // BAR_RESOL
-        beat = (pos % BAR_RESOL) // TICK_RESOL
+    # Only iterate through bars that actually have content
+    # Start from first_content_bar to avoid empty bars at beginning
+    for bar_step in range(first_content_bar * BAR_RESOL, last_content_bar * BAR_RESOL, BAR_RESOL):
+        # Bar event at start of each bar
+        events.append({
+            'tempo': 0,
+            'chord': 0,
+            'bar-beat': 'Bar',
+            'type': 'Metrical',
+            'pitch': 0,
+            'duration': 0,
+            'velocity': 0
+        })
         
-        # Add bar event if new bar
-        if bar > current_bar:
-            events.append([
-                event2word['tempo'].get('CONTI', 0),
-                event2word['chord'].get('CONTI', 0),
-                event2word['bar-beat']['Bar'],
-                event2word['type']['Metrical'],
-                event2word['pitch'].get('CONTI', 0),
-                event2word['duration'].get('CONTI', 0),
-                event2word['velocity'].get('CONTI', 0)
-            ])
-            current_bar = bar
-        
-        # Find tempo at this position
-        tempo_val = None
-        for tempo_item in tempo_items:
-            if tempo_item['time'] <= pos:
-                tempo_val = tempo_item['tempo']
-        
-        # Find chord at this position
-        chord_val = None
-        for chord_item in chord_items:
-            if chord_item['time'] <= pos:
-                chord_val = chord_item['chord']
-        
-        # Add beat event
-        tempo_str = f'Tempo_{int(tempo_val)}' if tempo_val else 'CONTI'
-        chord_str = chord_val if chord_val else 'CONTI'
-        beat_str = f'Beat_{beat}'
-        
-        events.append([
-            event2word['tempo'].get(tempo_str, 0),
-            event2word['chord'].get(chord_str, 0),
-            event2word['bar-beat'][beat_str],
-            event2word['type']['Metrical'],
-            event2word['pitch'].get('CONTI', 0),
-            event2word['duration'].get('CONTI', 0),
-            event2word['velocity'].get('CONTI', 0)
-        ])
-        
-        # Add note events for this position
-        for note in positions[pos]:
-            pitch_str = f'Pitch_{note["pitch"]}'
-            duration = note['end'] - note['start']
-            duration_str = f'Duration_{duration}'
-            velocity_str = f'Velocity_{note["velocity"]}'
+        # Process each beat position in this bar
+        for timing in range(bar_step, bar_step + BAR_RESOL, TICK_RESOL):
+            pos_text = f'Beat_{(timing - bar_step) // TICK_RESOL}'
+            pos_events = []
+            pos_on = False
             
-            events.append([
-                event2word['tempo'].get('CONTI', 0),
-                event2word['chord'].get('CONTI', 0),
-                event2word['bar-beat'].get('CONTI', 0),
-                event2word['type']['Note'],
-                event2word['pitch'].get(pitch_str, 0),
-                event2word['duration'].get(duration_str, 0),
-                event2word['velocity'].get(velocity_str, 0)
-            ])
+            # Check what's at this timing
+            t_tempos = tempo_grid.get(timing, None)
+            t_chords = chord_grid.get(timing, None)
+            t_notes = note_grid.get(timing, [])
+            
+            # Metrical event: only if tempo or chord change
+            if t_tempos is not None or t_chords is not None:
+                tempo_val = f'Tempo_{t_tempos}' if t_tempos is not None else 'CONTI'
+                chord_val = t_chords if t_chords is not None else 'CONTI'
+                
+                pos_events.append({
+                    'tempo': tempo_val,
+                    'chord': chord_val,
+                    'bar-beat': pos_text,
+                    'type': 'Metrical',
+                    'pitch': 0,
+                    'duration': 0,
+                    'velocity': 0
+                })
+                pos_on = True
+            
+            # Note events
+            if len(t_notes) > 0:
+                # If no metrical event yet, create one with CONTI
+                if not pos_on:
+                    pos_events.append({
+                        'tempo': 'CONTI',
+                        'chord': 'CONTI',
+                        'bar-beat': pos_text,
+                        'type': 'Metrical',
+                        'pitch': 0,
+                        'duration': 0,
+                        'velocity': 0
+                    })
+                
+                # Add all notes at this position
+                for note_info in t_notes:
+                    pos_events.append({
+                        'tempo': 0,
+                        'chord': 0,
+                        'bar-beat': 0,
+                        'type': 'Note',
+                        'pitch': f'Note_Pitch_{note_info["pitch"]}',
+                        'duration': f'Note_Duration_{note_info["duration"]}',
+                        'velocity': f'Note_Velocity_{note_info["velocity"]}'
+                    })
+            
+            # Only add if there are events at this position
+            if len(pos_events) > 0:
+                events.extend(pos_events)
     
-    return np.array(events)
+    # BAR ending (one more bar event at the very end)
+    events.append({
+        'tempo': 0,
+        'chord': 0,
+        'bar-beat': 'Bar',
+        'type': 'Metrical',
+        'pitch': 0,
+        'duration': 0,
+        'velocity': 0
+    })
+    
+    # EOS
+    events.append({
+        'tempo': 0,
+        'chord': 0,
+        'bar-beat': 0,
+        'type': 'EOS',
+        'pitch': 0,
+        'duration': 0,
+        'velocity': 0
+    })
+    
+    # === Step 3: Convert events to words (matching events2words.py) ===
+    class_keys = ['tempo', 'chord', 'bar-beat', 'type', 'pitch', 'duration', 'velocity']
+    words = []
+    
+    for event in events:
+        word = [event2word[key].get(event[key], 0) for key in class_keys]
+        words.append(word)
+    
+    result = np.array(words, dtype=np.int64)
+    print(f'[Info] Converted MIDI to {len(result)} compound words, {last_bar} bars, {len(note_grid)} positions')
+    return result
+
 
 ################################################################################
 # Controlled Generation
@@ -175,23 +280,25 @@ def inference_with_control(model, dictionary, target_bars=8, prompt_midi=None, t
 
     with torch.no_grad():
         final_res = []
+        generated_only = []  # Track only generated events (without prompt)
         memory = None
         h = None
         cnt_bar = 0
+        prompt_length = 0  # Track where prompt ends
         
         # Initialize with prompt if provided
         if prompt_midi is not None:
             print('[*] Loading prompt from:', prompt_midi)
-            prompt_events = read_midi_to_events(prompt_midi, word2event, event2word)
-            
+            prompt_events = read_midi_to_words(prompt_midi, event2word, word2event)
             # Count bars in prompt
             for event in prompt_events:
                 if word2event['bar-beat'][event[2]] == 'Bar':
                     cnt_bar += 1
             
             print(f'[*] Prompt has {cnt_bar} bars, {len(prompt_events)} events')
+            prompt_length = len(prompt_events)
             
-            # Feed prompt through model
+            # Feed prompt through model AND add to final output
             prompt_tensor = torch.from_numpy(prompt_events).long().cuda()
             print('------ processing prompt ------')
             
@@ -200,7 +307,7 @@ def inference_with_control(model, dictionary, target_bars=8, prompt_midi=None, t
                     print(f'Processing prompt event {step}/{len(prompt_events)}')
                 
                 input_ = prompt_tensor[step, :].unsqueeze(0).unsqueeze(0)
-                final_res.append(prompt_events[step, :][None, ...])
+                final_res.append(prompt_events[step, :][None, ...])  # Keep prompt in final output
                 
                 h, y_type, memory = model.forward_hidden(
                     input_, memory, is_training=False)
@@ -221,12 +328,12 @@ def inference_with_control(model, dictionary, target_bars=8, prompt_midi=None, t
                 print_word_cp(init[step, :])
                 input_ = init_t[step, :].unsqueeze(0).unsqueeze(0)
                 final_res.append(init[step, :][None, ...])
-                
+
                 h, y_type, memory = model.forward_hidden(
                     input_, memory, is_training=False)
         
         # Generate until target bars
-        print(f'------ generating {target_bars} bars ------')
+        print(f'------ generating to reach {target_bars} total bars ------')
         max_tokens = target_bars * 200  # Safety limit: ~200 tokens per bar
         token_count = 0
         
@@ -234,6 +341,8 @@ def inference_with_control(model, dictionary, target_bars=8, prompt_midi=None, t
             # Sample next token
             next_arr = model.froward_output_sampling(h, y_type)
             final_res.append(next_arr[None, ...])
+            generated_only.append(next_arr[None, ...])  # Track generated portion
+            # print(final_res)
             
             print(f'bar: {cnt_bar}/{target_bars}', end='  ==')
             print_word_cp(next_arr)
@@ -255,8 +364,11 @@ def inference_with_control(model, dictionary, target_bars=8, prompt_midi=None, t
         
     print('\n--------[Done]--------')
     final_res = np.concatenate(final_res)
-    print(f'Generated {final_res.shape[0]} tokens for {cnt_bar} bars')
-    return final_res
+    if prompt_midi is not None:
+        print(f'Total: {final_res.shape[0]} tokens ({prompt_length} prompt + {len(generated_only)} generated) for {cnt_bar} bars')
+    else:
+        print(f'Generated {final_res.shape[0]} tokens for {cnt_bar} bars')
+    return final_res[1:]    # Remove the first extra bar (for some ugly reason)
 
 ################################################################################
 # Main
@@ -371,4 +483,7 @@ def main():
     print(f'\n[*] Generation complete! Saved to {args.output_dir}')
 
 if __name__ == '__main__':
+    start_time = time.time()
     main()
+    end_time = time.time()
+    print(f"Total generation time: {end_time - start_time:.2f} seconds")
