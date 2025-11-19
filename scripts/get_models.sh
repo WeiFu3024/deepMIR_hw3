@@ -2,6 +2,8 @@
 
 gdown 1eaqKD9ZMDAMV3F54uKi_XiY80cJ6cEH3 -O models.zip
 unzip models.zip -d ./models
+mv ./models/models/* ./models/
+rmdir ./models/models
 gdown 1W76tPTK381Fy2zJuAEirFft-sA8pocEO -O basic_event_dictionary.pkl
 
 # gpt2/transformer-xl
