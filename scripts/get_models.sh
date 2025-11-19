@@ -1,6 +1,6 @@
 #!/bin/bash
 
-gdown 1kOcA6WshJJboZznO1AwSVvemy0q5zcnp -O models.zip
+gdown 1NirbbSHtJZY63w1CutmRErUiv8qQ5quS -O models.zip
 unzip models.zip
 gdown 1W76tPTK381Fy2zJuAEirFft-sA8pocEO -O basic_event_dictionary.pkl
 
