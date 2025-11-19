@@ -2,6 +2,7 @@ soundfonts/
 Pop1K7/
 *.bin
 *.ckpt
+*.zip
 *.pt
 *.pkl
 *.npy
