@@ -15,7 +15,7 @@ micromamba run -n cp_transformers bash -c "\
         --num_samples 20 \
         --temperature 1.2 \
         --top_p 0.9 \
-        --gid 2; \
+        --gid 0; \
     python3 workspace/uncond/cp-linear/inference_controlled.py \
         --model_path $model_path \
         --loss $loss \
@@ -26,7 +26,7 @@ micromamba run -n cp_transformers bash -c "\
         --num_samples 20 \
         --temperature 1.2 \
         --top_p 0.9 \
-        --gid 2; \
+        --gid 0; \
     cd ..; \
     python3 render.py --midi_dir ./results/cpword_${loss}/\
         --store_dir ./results/cpword_${loss}/; \

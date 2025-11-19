@@ -11,7 +11,7 @@ for model in model_to_inference:
         print(f"Running inference for model: {model} at epoch: {ep}")
         cmd = [
             'python', 'main.py',
-            '--device', 'cuda:3',
+            '--device', 'cuda',
             '--ckp_folder', f'./ckps/{model}',
             '--inference',
             '--model_type', model,

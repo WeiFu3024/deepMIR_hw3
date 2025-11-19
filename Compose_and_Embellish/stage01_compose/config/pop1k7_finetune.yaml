@@ -1,4 +1,4 @@
-device:                 cuda:3
+device:                 cuda
 pretrained_optim_path:  null
 pretrained_param_path:  null
 inference_param_path:   ckpt/stage01_compose_finetune_pop1k7_seq2400/params/ep040_loss0.809_params.pt
